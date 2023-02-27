@@ -53,46 +53,13 @@ class PoseDecode:
 class PreNormalize2D:
     """Normalize the range of keypoint values. """
 
-    def __init__(self, img_shape=(1080, 1920), threshold=0.01, mode='fix'):
-        self.threshold = threshold
-        # Will skip points with score less than threshold
+    def __init__(self, img_shape=(1080, 1920)):
         self.img_shape = img_shape
-        self.mode = mode
-        assert mode in ['fix', 'auto']
 
     def __call__(self, results):
-        mask, maskout, keypoint = None, None, results['keypoint'].astype(np.float32)
-        if 'keypoint_score' in results:
-            keypoint_score = results.pop('keypoint_score').astype(np.float32)
-            keypoint = np.concatenate([keypoint, keypoint_score[..., None]], axis=-1)
-
-        if keypoint.shape[-1] == 3:
-            mask = keypoint[..., 2] > self.threshold
-            maskout = keypoint[..., 2] <= self.threshold
-
-        if self.mode == 'auto':
-            if mask is not None:
-                if np.sum(mask):
-                    x_max, x_min = np.max(keypoint[mask, 0]), np.min(keypoint[mask, 0])
-                    y_max, y_min = np.max(keypoint[mask, 1]), np.min(keypoint[mask, 1])
-                else:
-                    x_max, x_min, y_max, y_min = 0, 0, 0, 0
-            else:
-                x_max, x_min = np.max(keypoint[..., 0]), np.min(keypoint[..., 0])
-                y_max, y_min = np.max(keypoint[..., 1]), np.min(keypoint[..., 1])
-            if (x_max - x_min) > 10 and (y_max - y_min) > 10:
-                keypoint[..., 0] = (keypoint[..., 0] - (x_max + x_min) / 2) / (x_max - x_min) * 2
-                keypoint[..., 1] = (keypoint[..., 1] - (y_max + y_min) / 2) / (y_max - y_min) * 2
-        else:
-            h, w = results.get('img_shape', self.img_shape)
-            keypoint[..., 0] = (keypoint[..., 0] - (w / 2)) / (w / 2)
-            keypoint[..., 1] = (keypoint[..., 1] - (h / 2)) / (h / 2)
-
-        if maskout is not None:
-            keypoint[..., 0][maskout] = 0
-            keypoint[..., 1][maskout] = 0
-        results['keypoint'] = keypoint
-
+        h, w = results.get('img_shape', self.img_shape)
+        results['keypoint'][..., 0] = (results['keypoint'][..., 0] - (w / 2)) / (w / 2)
+        results['keypoint'][..., 1] = (results['keypoint'][..., 1] - (h / 2)) / (h / 2)
         return results
 
 
@@ -145,7 +112,7 @@ class RandomScale:
         skeleton = results['keypoint']
         scale = self.scale
         if isinstance(scale, float):
-            scale = (scale, ) * skeleton.shape[-1]
+            scale = (scale,) * skeleton.shape[-1]
         assert len(scale) == skeleton.shape[-1]
         scale = 1 + np.random.uniform(-1, 1, size=len(scale)) * np.array(scale)
         results['keypoint'] = skeleton * scale
@@ -230,8 +197,8 @@ class PreNormalize3D:
         aa, bb, cc, dd = a * a, b * b, c * c, d * d
         bc, ad, ac, ab, bd, cd = b * c, a * d, a * c, a * b, b * d, c * d
         return np.array([[aa + bb - cc - dd, 2 * (bc + ad), 2 * (bd - ac)],
-                        [2 * (bc - ad), aa + cc - bb - dd, 2 * (cd + ab)],
-                        [2 * (bd + ac), 2 * (cd - ab), aa + dd - bb - cc]])
+                         [2 * (bc - ad), aa + cc - bb - dd, 2 * (cd + ab)],
+                         [2 * (bd + ac), 2 * (cd - ab), aa + dd - bb - cc]])
 
     def __init__(self, zaxis=[0, 1], xaxis=[8, 4], align_spine=True, align_center=True):
         self.zaxis = zaxis
@@ -292,28 +259,25 @@ class PreNormalize3D:
         return results
 
 
+@PIPELINES.register_module()
 class JointToBone:
 
     def __init__(self, dataset='nturgb+d', target='keypoint'):
         self.dataset = dataset
         self.target = target
-        if self.dataset not in ['nturgb+d', 'openpose', 'coco', 'handmp']:
+        if self.dataset not in ['nturgb+d', 'openpose', 'coco']:
             raise ValueError(
                 f'The dataset type {self.dataset} is not supported')
         if self.dataset == 'nturgb+d':
-            self.pairs = ((0, 1), (1, 20), (2, 20), (3, 2), (4, 20), (5, 4), (6, 5), (7, 6), (8, 20), (9, 8),
+            self.pairs = [(0, 1), (1, 20), (2, 20), (3, 2), (4, 20), (5, 4), (6, 5), (7, 6), (8, 20), (9, 8),
                           (10, 9), (11, 10), (12, 0), (13, 12), (14, 13), (15, 14), (16, 0), (17, 16), (18, 17),
-                          (19, 18), (21, 22), (20, 20), (22, 7), (23, 24), (24, 11))
+                          (19, 18), (21, 22), (20, 20), (22, 7), (23, 24), (24, 11)]
         elif self.dataset == 'openpose':
             self.pairs = ((0, 0), (1, 0), (2, 1), (3, 2), (4, 3), (5, 1), (6, 5), (7, 6), (8, 2), (9, 8), (10, 9),
                           (11, 5), (12, 11), (13, 12), (14, 0), (15, 0), (16, 14), (17, 15))
         elif self.dataset == 'coco':
             self.pairs = ((0, 0), (1, 0), (2, 0), (3, 1), (4, 2), (5, 0), (6, 0), (7, 5), (8, 6), (9, 7), (10, 8),
                           (11, 0), (12, 0), (13, 11), (14, 12), (15, 13), (16, 14))
-        elif self.dataset == 'handmp':
-            self.pairs = ((0, 0), (1, 0), (2, 1), (3, 2), (4, 3), (5, 0), (6, 5), (7, 6), (8, 7), (9, 0), (10, 9),
-                          (11, 10), (12, 11), (13, 0), (14, 13), (15, 14), (16, 15), (17, 0), (18, 17), (19, 18),
-                          (20, 19))
 
     def __call__(self, results):
 
@@ -324,7 +288,7 @@ class JointToBone:
         assert C in [2, 3]
         for v1, v2 in self.pairs:
             bone[..., v1, :] = keypoint[..., v1, :] - keypoint[..., v2, :]
-            if C == 3 and self.dataset in ['openpose', 'coco', 'handmp']:
+            if C == 3 and self.dataset in ['openpose', 'coco']:
                 score = (keypoint[..., v1, 2] + keypoint[..., v2, 2]) / 2
                 bone[..., v1, 2] = score
 
@@ -446,7 +410,7 @@ class FormatGCNInput:
         # M T V C
         if keypoint.shape[0] < self.num_person:
             pad_dim = self.num_person - keypoint.shape[0]
-            pad = np.zeros((pad_dim, ) + keypoint.shape[1:], dtype=keypoint.dtype)
+            pad = np.zeros((pad_dim,) + keypoint.shape[1:], dtype=keypoint.dtype)
             keypoint = np.concatenate((keypoint, pad), axis=0)
             if self.mode == 'loop' and keypoint.shape[0] == 1:
                 for i in range(1, self.num_person):
@@ -468,15 +432,13 @@ class FormatGCNInput:
 
 
 @PIPELINES.register_module()
-class DecompressPose:
+class DecompressPoseLocalFiles:
     """Load Compressed Pose
-
     In compressed pose annotations, each item contains the following keys:
     Original keys: 'label', 'frame_dir', 'img_shape', 'original_shape', 'total_frames'
     New keys: 'frame_inds', 'keypoint', 'anno_inds'.
     This operation: 'frame_inds', 'keypoint', 'total_frames', 'anno_inds'
          -> 'keypoint', 'keypoint_score', 'total_frames'
-
     Args:
         squeeze (bool): Whether to remove frames with no human pose. Default: True.
         max_person (int): The max number of persons in a frame, we keep skeletons with scores from high to low.
@@ -518,7 +480,103 @@ class DecompressPose:
 
         results['total_frames'] = total_frames
 
-        num_joints = keypoint.shape[1]
+        num_joints = keypoint.shape[2]
+        num_person = get_mode(frame_inds)[-1][0]
+
+        new_kp = np.zeros([num_person, total_frames, num_joints, 2], dtype=np.float16)
+        new_kpscore = np.zeros([num_person, total_frames, num_joints], dtype=np.float16)
+        # 32768 is enough
+        nperson_per_frame = np.zeros([total_frames], dtype=np.int16)
+
+        try:
+            keypoint[0]
+
+        except IndexError:
+            print("file name ", results["frame_dir"],
+                  "num_joints:-", num_joints,
+                  "num_person:-", num_person,
+                  "kp.shape:-", keypoint.shape,
+                  "new kp.shape:-", new_kp.shape,
+                  "new kp_score.shape:-", new_kpscore.shape,
+                  "nperson_per_frame", nperson_per_frame, sep="\n")
+
+        for frame_ind, kp in zip(frame_inds, keypoint[0]):
+            person_ind = nperson_per_frame[frame_ind]
+            # print(new_kp[person_ind, frame_ind].shape, kp.shape)
+            new_kp[person_ind, frame_ind] = kp[:, :2]
+            new_kpscore[person_ind, frame_ind] = results['keypoint_score'][person_ind, frame_ind]
+            nperson_per_frame[frame_ind] += 1
+
+        if num_person > self.max_person:
+            for i in range(total_frames):
+                nperson = nperson_per_frame[i]
+                val = new_kpscore[:nperson, i]
+                score_sum = val.sum(-1)
+
+                inds = sorted(range(nperson), key=lambda x: -score_sum[x])
+                new_kpscore[:nperson, i] = new_kpscore[inds, i]
+                new_kp[:nperson, i] = new_kp[inds, i]
+            num_person = self.max_person
+            results['num_person'] = num_person
+
+        results['keypoint'] = new_kp[:num_person]
+        results['keypoint_score'] = new_kpscore[:num_person]
+        return results
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}(squeeze={self.squeeze}, max_person={self.max_person})'
+
+
+@PIPELINES.register_module()
+class DecompressPose:
+    """Load Compressed Pose
+    In compressed pose annotations, each item contains the following keys:
+    Original keys: 'label', 'frame_dir', 'img_shape', 'original_shape', 'total_frames'
+    New keys: 'frame_inds', 'keypoint', 'anno_inds'.
+    This operation: 'frame_inds', 'keypoint', 'total_frames', 'anno_inds'
+         -> 'keypoint', 'keypoint_score', 'total_frames'
+    Args:
+        squeeze (bool): Whether to remove frames with no human pose. Default: True.
+        max_person (int): The max number of persons in a frame, we keep skeletons with scores from high to low.
+            Default: 10.
+    """
+
+    def __init__(self,
+                 squeeze=True,
+                 max_person=10):
+
+        self.squeeze = squeeze
+        self.max_person = max_person
+
+    def __call__(self, results):
+
+        required_keys = ['total_frames', 'frame_inds', 'keypoint']
+        for k in required_keys:
+            assert k in results
+
+        total_frames = results['total_frames']
+        frame_inds = results.pop('frame_inds')
+        keypoint = results['keypoint']
+
+        if 'anno_inds' in results:
+            frame_inds = frame_inds[results['anno_inds']]
+            keypoint = keypoint[results['anno_inds']]
+
+        assert np.all(np.diff(frame_inds) >= 0), 'frame_inds should be monotonical increasing'
+
+        def mapinds(inds):
+            uni = np.unique(inds)
+            map_ = {x: i for i, x in enumerate(uni)}
+            inds = [map_[x] for x in inds]
+            return np.array(inds, dtype=np.int16)
+
+        if self.squeeze:
+            frame_inds = mapinds(frame_inds)
+            total_frames = np.max(frame_inds) + 1
+
+        results['total_frames'] = total_frames
+
+        num_joints = keypoint.shape[2]
         num_person = get_mode(frame_inds)[-1][0]
 
         new_kp = np.zeros([num_person, total_frames, num_joints, 2], dtype=np.float16)
@@ -549,4 +607,4 @@ class DecompressPose:
         return results
 
     def __repr__(self):
-        return (f'{self.__class__.__name__}(squeeze={self.squeeze}, max_person={self.max_person})')
+        return f'{self.__class__.__name__}(squeeze={self.squeeze}, max_person={self.max_person})'
