@@ -67,7 +67,7 @@ test_pipeline = [
     dict(type='GeneratePoseTarget', with_kp=False, with_limb=True, double=True,
          left_kp=left_kp, right_kp=right_kp, left_limb=left_limb, right_limb=right_limb, skeletons=skeletons),
     dict(type='FormatShape', input_format='NCTHW_Heatmap'),
-    dict(type='Collect', keys=['imgs', 'label'], meta_keys=['filename']),
+    dict(type='CollectLocalFiles', keys=['imgs', 'label'], meta_keys=['filename']),
     dict(type='ToTensor', keys=['imgs'])
 ]
 data = dict(
